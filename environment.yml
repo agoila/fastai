@@ -92,7 +92,6 @@ dependencies:
 - torchvision>=0.1.9
 - bcolz
 - prompt_toolkit
-- unzip
 - pip:
   - opencv-python
   - isoweek
@@ -102,4 +101,6 @@ dependencies:
   - sklearn_pandas
   - feather-format
   - jupyter_contrib_nbextensions
+  - plotnine
+  - git+https://github.com/SauceCat/PDPbox.git
 
