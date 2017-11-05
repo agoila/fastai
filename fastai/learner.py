@@ -32,7 +32,7 @@ class Learner():
         os.makedirs(self.models_path, exist_ok=True)
         self.crit,self.reg_fn,self.crit = None,None,None
 
-    def num_features(self): return num_features(self.model)
+    #def num_features(self): return num_features(self.model)
 
     def __getitem__(self,i): return self.children[i]
 
@@ -44,6 +44,8 @@ class Learner():
 
     @property
     def data(self): return self.data_
+
+    def summary(self): return model_summary(self.model, [3,self.data.sz,self.data.sz])
 
     def freeze_to(self, n):
         c=self.children
