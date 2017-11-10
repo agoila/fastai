@@ -37,13 +37,15 @@ def lighting(im, b, c):
     im = ImageEnhance.Contrast(im).enhance(c)
     return im
 
-def rotate(im, deg):
+def rotate(im, deg, black_corners=False):
     """ Rotates and image by deg degrees,
     and uses existing image for corner fill.
 
     Arguments:
         deg (float): degree to rotate.
     """
+    if black_corners:
+        return im.rotate(deg, resample=Image.BILINEAR)
     im2 = im.convert("RGBA").rotate(deg, resample=Image.BILINEAR)
     im.paste(im2, im2)
     return im
@@ -467,7 +469,7 @@ class RandomLightingXY(Transform):
 def compose(im, y, fns):
     for fn in fns:
         im, y =fn(im, y)
-    return im, y
+    return im if y is None else (im, y)
 
 
 class CropType(IntEnum):
@@ -485,7 +487,7 @@ class Transforms():
         if crop_type == CropType.RANDOM: crop_tfm = RandomCropXY(sz, tfm_y)
         if crop_type == CropType.NO: crop_tfm = NoCropXY(sz, tfm_y)
         self.tfms = tfms + [crop_tfm, channel_dim]
-    def __call__(self, im, y): return compose(im, y, self.tfms)
+    def __call__(self, im, y=None): return compose(im, y, self.tfms)
 
 
 def image_gen(normalizer, denorm, sz, tfms=None, max_zoom=None, pad=0, crop_type=None, tfm_y=None):
