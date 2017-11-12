@@ -3,6 +3,7 @@ tags
 data
 courses/dl1/data
 courses/dl1/Kaggle-dog-breed-classification.ipynb
+courses/dl1/data/dogbreed/results
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
