@@ -10,7 +10,7 @@ model_meta = {
     wrn:[8,6], inceptionresnet_2:[-2,9], inception_4:[-1,9],
     dn121:[0,6], dn161:[0,6], dn169:[0,6], dn201:[0,6],
 }
-model_features = {inception_4: 3072, dn121: 2048, dn161: 4416}
+model_features = {inception_4: 3072, dn121: 2048, dn161: 4416,} # nasnetalarge: 4032*2}
 
 class ConvnetBuilder():
     """Class representing a convolutional network.
@@ -32,7 +32,8 @@ class ConvnetBuilder():
         if xtra_fc is None: xtra_fc = [512]
         self.ps,self.xtra_fc = ps,xtra_fc
 
-        cut,self.lr_cut = model_meta[f]
+        if f in model_meta: cut,self.lr_cut = model_meta[f]
+        else: cut,self.lr_cut = 0,0
         cut-=xtra_cut
         layers = cut_model(f(True), cut)
         self.nf = model_features[f] if f in model_features else (num_features(layers)*2)
@@ -55,16 +56,16 @@ class ConvnetBuilder():
         res=[nn.BatchNorm1d(num_features=ni)]
         if p: res.append(nn.Dropout(p=p))
         res.append(nn.Linear(in_features=ni, out_features=nf))
-        if actn: res.append(actn())
+        if actn: res.append(actn)
         return res
 
     def get_fc_layers(self):
         res=[]
         ni=self.nf
         for i,nf in enumerate(self.xtra_fc):
-            res += self.create_fc_layer(ni, nf, p=self.ps[i], actn=nn.ReLU)
+            res += self.create_fc_layer(ni, nf, p=self.ps[i], actn=nn.ReLU())
             ni=nf
-        final_actn = nn.Sigmoid if self.is_multi else nn.LogSoftmax
+        final_actn = nn.Sigmoid() if self.is_multi else nn.LogSoftmax()
         if self.is_reg: final_actn = None
         res += self.create_fc_layer(ni, self.c, p=self.ps[-1], actn=final_actn)
         return res
@@ -109,6 +110,13 @@ class ConvLearner(Learner):
     def get_layer_groups(self):
         return self.models.get_layer_groups(self.precompute)
 
+    def summary(self):
+        precompute = self.precompute
+        self.precompute = False
+        res = super().summary()
+        self.precompute = precompute
+        return res
+
     def get_activations(self, force=False):
         tmpl = f'_{self.models.name}_{self.data.sz}.bc'
         # TODO: Somehow check that directory names haven't changed (e.g. added test set)
@@ -122,11 +130,11 @@ class ConvLearner(Learner):
         self.get_activations()
         act, val_act, test_act = self.activations
         m=self.models.top_model
-        if len(self.activations[0])==0:
+        if len(self.activations[0])!=len(self.data.trn_ds):
             predict_to_bcolz(m, self.data.fix_dl, act)
-        if len(self.activations[1])==0:
+        if len(self.activations[1])!=len(self.data.val_ds):
             predict_to_bcolz(m, self.data.val_dl, val_act)
-        if len(self.activations[2])==0:
+        if self.data.test_dl and (len(self.activations[2])!=len(self.data.test_ds)):
             if self.data.test_dl: predict_to_bcolz(m, self.data.test_dl, test_act)
 
         self.fc_data = ImageClassifierData.from_arrays(self.data.path,
