@@ -2,8 +2,6 @@
 tmp*
 tags
 data
-results
-#dog-breed.ipynb
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
