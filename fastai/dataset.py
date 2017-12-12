@@ -33,7 +33,10 @@ def read_dir(path, folder):
     # TODO: warn or error if no files found?
     full_path = os.path.join(path, folder)
     fnames = iglob(f"{full_path}/*.*")
-    return [os.path.relpath(f,path) for f in fnames]
+    if any(fnames):
+        return [os.path.relpath(f,path) for f in fnames]
+    else:
+        raise FileNotFoundError("{} folder doesn't exist or is empty".format(folder))
 
 def read_dirs(path, folder):
     labels, filenames, all_labels = [], [], []
@@ -161,7 +164,7 @@ class FilesArrayDataset(FilesDataset):
         self.y=y
         assert(len(fnames)==len(y))
         super().__init__(fnames, transform, path)
-    def get_y(self, i): return self.y[i]
+    def get_y(self, i): return self.y[i].astype(np.int64)
     def get_c(self): return self.y.shape[1]
 
 
@@ -190,6 +193,7 @@ class ArraysDataset(BaseDataset):
 
 class ArraysIndexDataset(ArraysDataset):
     def get_c(self): return int(self.y.max())+1
+    def get_y(self, i): return self.y[i].astype(np.int64)
 
 
 class ArraysNhotDataset(ArraysDataset):
