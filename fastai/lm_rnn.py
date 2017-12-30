@@ -1,7 +1,7 @@
 import warnings
 from .imports import *
 from .torch_imports import *
-from .rnn_reg import embedded_dropout,LockedDropout,WeightDrop
+from .rnn_reg import LockedDropout,WeightDrop,EmbeddingDropout
 from .model import Stepper
 
 
@@ -56,6 +56,7 @@ class RNN_Encoder(nn.Module):
 
         super().__init__()
         self.encoder = nn.Embedding(ntoken, emb_sz, padding_idx=pad_token)
+        self.encoder_with_dropout = EmbeddingDropout(self.encoder)
         self.rnns = [torch.nn.LSTM(emb_sz if l == 0 else nhid, nhid if l != nlayers - 1 else emb_sz, 1, dropout=dropouth)
                      for l in range(nlayers)]
         if wdrop: self.rnns = [WeightDrop(rnn, wdrop) for rnn in self.rnns]
@@ -76,7 +77,7 @@ class RNN_Encoder(nn.Module):
             dropouth, list of tensors evaluated from each RNN layer using dropouth,
         """
 
-        emb = embedded_dropout(self.encoder, input, dropout=self.dropoute if self.training else 0)
+        emb = self.encoder_with_dropout(input, dropout=self.dropoute if self.training else 0)
         emb = self.dropouti(emb)
 
         raw_output = emb
@@ -157,19 +158,37 @@ class LinearDecoder(LinearRNNOutput):
         return result, raw_outputs, outputs
 
 
-class PoolingLinearClassifier(LinearRNNOutput):
+class LinearBlock(nn.Module):
+    def __init__(self, ni, nf, drop):
+        super().__init__()
+        self.lin = nn.Linear(ni, nf)
+        self.drop = nn.Dropout(drop)
+        self.bn = nn.BatchNorm1d(ni)
+
+    def forward(self, x): return self.lin(self.drop(self.bn(x)))
+
+
+class PoolingLinearClassifier(nn.Module):
+    def __init__(self, layers, drops):
+        super().__init__()
+        self.layers = nn.ModuleList([
+            LinearBlock(layers[i], layers[i + 1], drops[i]) for i in range(len(layers) - 1)])
+
     def pool(self, x, bs, is_max):
         f = F.adaptive_max_pool1d if is_max else F.adaptive_avg_pool1d
         return f(x.permute(1,2,0), (1,)).view(bs,-1)
 
     def forward(self, input):
-        output, raw_outputs, outputs = super().forward(input)
-        bs,_ = output[-1].size()
+        raw_outputs, outputs = input
+        output = outputs[-1]
+        sl,bs,_ = output.size()
         avgpool = self.pool(output, bs, False)
         mxpool = self.pool(output, bs, True)
-        pooled = torch.cat([output[-1], mxpool, avgpool], 1)
-        result = self.decoder(pooled)
-        return result, raw_outputs, outputs
+        x = torch.cat([output[-1], mxpool, avgpool], 1)
+        for l in self.layers:
+            l_x = l(x)
+            x = F.relu(l_x)
+        return l_x, raw_outputs, outputs
 
 
 class SequentialRNN(nn.Sequential):
@@ -215,9 +234,9 @@ def get_language_model(bs, n_tok, emb_sz, nhid, nlayers, pad_token,
     return SequentialRNN(rnn_enc, LinearDecoder(n_tok, emb_sz, dropout, tie_encoder=enc))
 
 
-def get_rnn_classifer(max_sl, bptt, bs, n_class, n_tok, emb_sz, n_hid, n_layers, pad_token,
+def get_rnn_classifer(max_sl, bptt, bs, n_class, n_tok, emb_sz, n_hid, n_layers, pad_token, layers, drops,
                       dropout=0.4, dropouth=0.3, dropouti=0.5, dropoute=0.1, wdrop=0.5):
     rnn_enc = MultiBatchRNN(max_sl, bptt, bs, n_tok, emb_sz, n_hid, n_layers, pad_token=pad_token,
                       dropouth=dropouth, dropouti=dropouti, dropoute=dropoute, wdrop=wdrop)
-    return SequentialRNN(rnn_enc, PoolingLinearClassifier(n_class, 3*emb_sz, dropout))
+    return SequentialRNN(rnn_enc, PoolingLinearClassifier(layers, drops))
 
