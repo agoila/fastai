@@ -11,11 +11,14 @@ from sklearn.model_selection import train_test_split
 from torchtext.datasets import language_modeling
 
 import spacy
+from spacy.symbols import ORTH
 
-re_br = re.compile('<br />')
-spacy_en = spacy.load('en')
+re_br = re.compile(r'<\s*br\s*/?>', re.IGNORECASE)
 def sub_br(x): return re_br.sub("\n", x)
-def spacy_tok(x): return [tok.text for tok in spacy_en.tokenizer(sub_br(x))]
+
+my_tok = spacy.load('en')
+my_tok.tokenizer.add_special_case('<eos>', [{ORTH: '<eos>'}])
+def spacy_tok(x): return [tok.text for tok in my_tok.tokenizer(sub_br(x))]
 
 re_tok = re.compile(f'([{string.punctuation}“”¨«»®´·º½¾¿¡§£₤‘’])')
 def tokenize(s): return re_tok.sub(r' \1 ', s).split()
@@ -133,10 +136,19 @@ class TextClassifierData(ModelData):
         return cls('.', trn_dl, val_dl)
 
 
+def flip_tensor(x, dim):
+    xsize = x.size()
+    dim = x.dim() + dim if dim < 0 else dim
+    x = x.view(-1, *xsize[dim:])
+    x = x.view(x.size(0), x.size(1), -1)[:, getattr(torch.arange(x.size(1)-1,
+                      -1, -1), ('cpu','cuda')[x.is_cuda])().long(), :]
+    return x.view(xsize)
+
+
 class LanguageModelLoader():
 
-    def __init__(self, ds, bs, bptt):
-        self.bs,self.bptt = bs,bptt
+    def __init__(self, ds, bs, bptt, backwards=False):
+        self.bs,self.bptt,self.backwards = bs,bptt,backwards
         text = sum([o.text for o in ds], [])
         fld = ds.fields['text']
         nums = fld.numericalize([text])
@@ -163,13 +175,13 @@ class LanguageModelLoader():
         nb = data.size(0) // self.bs
         data = data[:nb*self.bs]
         data = data.view(self.bs, -1).t().contiguous()
+        if self.backwards: data=flip_tensor(data, 0)
         return to_gpu(data)
 
     def get_batch(self, i, seq_len):
         source = self.data
         seq_len = min(seq_len, len(source) - 1 - i)
         return source[i:i+seq_len], source[i+1:i+1+seq_len].view(-1)
-
 
 class RNN_Learner(Learner):
     def __init__(self, data, models, **kwargs):
@@ -199,7 +211,7 @@ class ConcatTextDatasetFromDataFrames(torchtext.data.Dataset):
         fields = [('text', text_field)]
         text = []
 
-        text += text_field.preprocess(df[col].str.cat(sep=' '))
+        text += text_field.preprocess(df[col].str.cat(sep=' <eos> '))
         if (newline_eos): text.append('<eos>')
 
         examples = [torchtext.data.Example.fromlist([text], fields)]
@@ -242,7 +254,7 @@ class LanguageModelData():
             >> learner.fit(3e-3, 4, wds=1e-6, cycle_len=1, cycle_mult=2)
 
     """
-    def __init__(self, path, field, trn_ds, val_ds, test_ds, bs, bptt, **kwargs):
+    def __init__(self, path, field, trn_ds, val_ds, test_ds, bs, bptt, backwards=False, **kwargs):
         """ Constructor for the class. An important thing that happens here is
             that the field's "build_vocab" method is invoked, which builds the vocabulary
             for this NLP model.
@@ -270,8 +282,8 @@ class LanguageModelData():
         self.pad_idx = field.vocab.stoi[field.pad_token]
         self.nt = len(field.vocab)
 
-        self.trn_dl, self.val_dl, self.test_dl = [ LanguageModelLoader(ds, bs, bptt)
-                                                    for ds in (self.trn_ds, self.val_ds, self.test_ds) ]
+        self.trn_dl, self.val_dl, self.test_dl = [LanguageModelLoader(ds, bs, bptt, backwards=backwards)
+                                                  for ds in (self.trn_ds, self.val_ds, self.test_ds) ]
 
     def get_model(self, opt_fn, emb_sz, n_hid, n_layers, **kwargs):
         """ Method returns a RNN_Learner object, that wraps an instance of the RNN_Encoder module.
@@ -343,7 +355,8 @@ class TextDataLoader():
 
 class TextModel(BasicModel):
     def get_layer_groups(self):
-        return [self.model[0].encoder, self.model[0].rnns, self.model[1]]
+        m = self.model[0]
+        return [m.encoder, *zip(m.rnns, m.dropouths), (self.model[1], m.dropouti)]
 
 
 class TextData(ModelData):
@@ -353,7 +366,8 @@ class TextData(ModelData):
     def from_splits(cls, path, splits, bs, text_name='text', label_name='label'):
         text_fld = splits[0].fields[text_name]
         label_fld = splits[0].fields[label_name]
-        label_fld.build_vocab(splits[0])
+        if hasattr(label_fld, 'build_vocab'):
+            label_fld.build_vocab(splits[0])
         iters = torchtext.data.BucketIterator.splits(splits, batch_size=bs)
         trn_iter,val_iter,test_iter = iters[0],iters[1],None
         test_dl = None
@@ -366,12 +380,16 @@ class TextData(ModelData):
         obj.bs = bs
         obj.pad_idx = text_fld.vocab.stoi[text_fld.pad_token]
         obj.nt = len(text_fld.vocab)
-        obj.c = len(label_fld.vocab)
+        obj.c = (len(label_fld.vocab) if hasattr(label_fld, 'vocab')
+                 else len(getattr(splits[0][0], label_name)))
         return obj
 
-    def get_model(self, opt_fn, max_sl, bptt, emb_sz, n_hid, n_layers, **kwargs):
-        m = get_rnn_classifer(max_sl, bptt, self.bs, self.c, self.nt, emb_sz=emb_sz, n_hid=n_hid, n_layers=n_layers,
-                              pad_token=self.pad_idx, **kwargs)
+    def to_model(self, m, opt_fn):
         model = TextModel(to_gpu(m))
         return RNN_Learner(self, model, opt_fn=opt_fn)
+
+    def get_model(self, opt_fn, max_sl, bptt, emb_sz, n_hid, n_layers, **kwargs):
+        m = get_rnn_classifer(max_sl, bptt, self.bs, self.c, self.nt,
+              emb_sz=emb_sz, n_hid=n_hid, n_layers=n_layers, pad_token=self.pad_idx, **kwargs)
+        return self.to_model(m, opt_fn)
 
