@@ -51,7 +51,7 @@ class Stepper():
     def evaluate(self, xs, y):
         preds = self.m(*xs)
         if isinstance(preds,(tuple,list)): preds=preds[0]
-        return preds, self.crit(preds,y)
+        return preds, self.crit(preds, y)
 
 from . import lm_rnn
 def set_train_mode(m):
