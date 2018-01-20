@@ -10,12 +10,12 @@ conv_dict = {np.dtype('int8'): torch.LongTensor, np.dtype('int16'): torch.LongTe
 def T(a):
     if torch.is_tensor(a): res = a
     else:
-        a = np.array(a)
+        a = np.array(np.ascontiguousarray(a))
         if a.dtype in (np.int8, np.int16, np.int32, np.int64):
             res = torch.LongTensor(a.astype(np.int64))
         elif a.dtype in (np.float32, np.float64):
             return torch.FloatTensor(a.astype(np.float32))
-        else: raise NotImplementedError
+        else: raise NotImplementedError(a.dtype)
     return to_gpu(res, async=True)
 
 def create_variable(x, volatile, requires_grad=False):
@@ -36,8 +36,9 @@ def to_np(v):
     if isinstance(v, Variable): v=v.data
     return v.cpu().numpy()
 
+USE_GPU=True
 def to_gpu(x, *args, **kwargs):
-    return x.cuda(*args, **kwargs) if torch.cuda.is_available() else x
+    return x.cuda(*args, **kwargs) if torch.cuda.is_available() and USE_GPU else x
 
 def noop(*args, **kwargs): return
 
@@ -73,3 +74,22 @@ def SGD_Momentum(momentum):
     return lambda *args, **kwargs: optim.SGD(*args, momentum=momentum, **kwargs)
 
 def one_hot(a,c): return np.eye(c)[a]
+
+def partition(a, sz): return [a[i:i+sz] for i in range(0, len(a), sz)]
+
+def partition_by_cores(a):
+    return partition(a, len(a)//len(os.sched_getaffinity(0)) + 1)
+
+
+class BasicModel():
+    def __init__(self,model,name='unnamed'): self.model,self.name = model,name
+    def get_layer_groups(self, do_fc=False): return children(self.model)
+
+class SingleModel(BasicModel):
+    def get_layer_groups(self): return [self.model]
+
+def save(fn, a): pickle.dump(a, open(fn,'wb'))
+def load(fn): return pickle.load(open(fn,'rb'))
+def load2(fn): return pickle.load(open(fn,'rb'), encoding='iso-8859-1')
+
+def load_array(fname): return bcolz.open(fname)[:]
