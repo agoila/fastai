@@ -75,7 +75,7 @@ class Tokenizer():
     def proc_all(self, ss): return [self.proc_text(s) for s in ss]
 
     def proc_all_mp(self, ss):
-        ncpus = len(os.sched_getaffinity(0))//2
+        ncpus = num_cpus()//2
         with ProcessPoolExecutor(ncpus) as e: return sum(e.map(self.proc_all, ss), [])
 
 
@@ -152,12 +152,12 @@ class LanguageModelLoader():
 class LanguageModel(BasicModel):
     def get_layer_groups(self):
         m = self.model[0]
-        return [(self.model[1], m.dropouti), *zip(m.rnns, m.dropouths)]
+        return [*zip(m.rnns, m.dropouths), (self.model[1], m.dropouti)]
 
 
 class LanguageModelData():
-    def __init__(self, path, pad_idx, nt, trn_dl, val_dl, test_dl=None, bs=64, bptt=70, backwards=False, **kwargs):
-        self.bs,self.path,self.pad_idx,self.nt = bs,path,pad_idx,nt
+    def __init__(self, path, pad_idx, nt, trn_dl, val_dl, test_dl=None, bptt=70, backwards=False, **kwargs):
+        self.path,self.pad_idx,self.nt = path,pad_idx,nt
         self.trn_dl,self.val_dl,self.test_dl = trn_dl,val_dl,test_dl
 
     def get_model(self, opt_fn, emb_sz, n_hid, n_layers, **kwargs):

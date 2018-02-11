@@ -14,7 +14,7 @@ def T(a):
         if a.dtype in (np.int8, np.int16, np.int32, np.int64):
             res = torch.LongTensor(a.astype(np.int64))
         elif a.dtype in (np.float32, np.float64):
-            return torch.FloatTensor(a.astype(np.float32))
+            res = torch.FloatTensor(a.astype(np.float32))
         else: raise NotImplementedError(a.dtype)
     return to_gpu(res, async=True)
 
@@ -78,7 +78,13 @@ def one_hot(a,c): return np.eye(c)[a]
 def partition(a, sz): return [a[i:i+sz] for i in range(0, len(a), sz)]
 
 def partition_by_cores(a):
-    return partition(a, len(a)//len(os.sched_getaffinity(0)) + 1)
+    return partition(a, len(a)//num_cpus() + 1)
+
+def num_cpus():
+    try:
+        return len(os.sched_getaffinity(0))
+    except AttributeError:
+        return os.cpu_count()
 
 
 class BasicModel():
@@ -87,6 +93,20 @@ class BasicModel():
 
 class SingleModel(BasicModel):
     def get_layer_groups(self): return [self.model]
+
+class SimpleNet(nn.Module):
+    def __init__(self, layers):
+        super().__init__()
+        self.layers = nn.ModuleList([
+            nn.Linear(layers[i], layers[i + 1]) for i in range(len(layers) - 1)])
+
+    def forward(self, x):
+        x = x.view(x.size(0), -1)
+        for l in self.layers:
+            l_x = l(x)
+            x = F.relu(l_x)
+        return F.log_softmax(l_x, dim=-1)
+
 
 def save(fn, a): pickle.dump(a, open(fn,'wb'))
 def load(fn): return pickle.load(open(fn,'rb'))

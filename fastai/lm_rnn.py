@@ -130,32 +130,18 @@ class MultiBatchRNN(RNN_Encoder):
                 outputs.append(o)
         return self.concat(raw_outputs), self.concat(outputs)
 
-
-class LinearRNNOutput(nn.Module):
+class LinearDecoder(nn.Module):
     initrange=0.1
-    def __init__(self, n_out, nhid, dropout):
+    def __init__(self, n_out, nhid, dropout, tie_encoder=None):
         super().__init__()
-        self.decoder = nn.Linear(nhid, n_out)
-        self.decoder.bias.data.fill_(0)
+        self.decoder = nn.Linear(nhid, n_out, bias=False)
         self.decoder.weight.data.uniform_(-self.initrange, self.initrange)
         self.dropout = LockedDropout(dropout)
+        if tie_encoder: self.decoder.weight = tie_encoder.weight
 
     def forward(self, input):
         raw_outputs, outputs = input
         output = self.dropout(outputs[-1])
-        return output, raw_outputs, outputs
-
-
-class LinearDecoder(LinearRNNOutput):
-    """ A custom Linear layer that reads the signals from the output of the RNN_Encoder layer,
-    and decodes to a output of size n_tokens.
-    """
-    def __init__(self, n_out, nhid, dropout, tie_encoder=None):
-        super().__init__(n_out, nhid, dropout)
-        if tie_encoder: self.decoder.weight = tie_encoder.weight
-
-    def forward(self, input):
-        output, raw_outputs, outputs = super().forward(input)
         decoded = self.decoder(output.view(output.size(0)*output.size(1), output.size(2)))
         result = decoded.view(-1, decoded.size(1))
         return result, raw_outputs, outputs
@@ -215,7 +201,6 @@ def get_language_model(n_tok, emb_sz, nhid, nlayers, pad_token,
     LinearDecoder layers sequentially in the model.
 
     Args:
-        bs (int): batch size of input data
         ntoken (int): number of vocabulary (or tokens) in the source dataset
         emb_sz (int): the embedding size to use to encode each token
         nhid (int): number of hidden activation per LSTM layer

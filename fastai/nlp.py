@@ -162,13 +162,13 @@ class RNN_Learner(Learner):
 
 
 class ConcatTextDataset(torchtext.data.Dataset):
-    def __init__(self, path, text_field, newline_eos=True, **kwargs):
+    def __init__(self, path, text_field, newline_eos=True, encoding='utf-8', **kwargs):
         fields = [('text', text_field)]
         text = []
         if os.path.isdir(path): paths=glob(f'{path}/*.*')
         else: paths=[path]
         for p in paths:
-            for line in open(p): text += text_field.preprocess(line)
+            for line in open(p, encoding=encoding): text += text_field.preprocess(line)
             if newline_eos: text.append('<eos>')
 
         examples = [torchtext.data.Example.fromlist([text], fields)]
@@ -267,7 +267,7 @@ class LanguageModelData():
             An instance of the RNN_Learner class.
 
         """
-        m = get_language_model(self.nt, emb_sz, nhid=n_hid, nlayers=n_layers, pad_idx=self.pad_idx, **kwargs)
+        m = get_language_model(self.nt, emb_sz, n_hid, n_layers, self.pad_idx, **kwargs)
         model = SingleModel(to_gpu(m))
         return RNN_Learner(self, model, opt_fn=opt_fn)
 
@@ -318,7 +318,7 @@ class TextDataLoader():
         it = iter(self.src)
         for i in range(len(self)):
             b = next(it)
-            yield getattr(b, self.x_fld), getattr(b, self.y_fld)
+            yield getattr(b, self.x_fld).data, getattr(b, self.y_fld).data
 
 
 class TextModel(BasicModel):
@@ -356,7 +356,7 @@ class TextData(ModelData):
         return RNN_Learner(self, model, opt_fn=opt_fn)
 
     def get_model(self, opt_fn, max_sl, bptt, emb_sz, n_hid, n_layers, dropout, **kwargs):
-        m = get_rnn_classifer(max_sl, bptt, self.bs, self.c, self.nt,
+        m = get_rnn_classifer(bptt, max_sl, self.c, self.nt,
               layers=[emb_sz*3, self.c], drops=[dropout],
               emb_sz=emb_sz, n_hid=n_hid, n_layers=n_layers, pad_token=self.pad_idx, **kwargs)
         return self.to_model(m, opt_fn)
