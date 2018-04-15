@@ -89,6 +89,7 @@ def fit(model, data, epochs, opt, crit, metrics=None, callbacks=None, stepper=St
     """
     all_val = kwargs.pop('all_val') if 'all_val' in kwargs else False
     sampler = kwargs.pop('sampler') if 'sampler' in kwargs else None
+    get_ep_vals = kwargs.pop('get_ep_vals') if 'get_ep_vals' in kwargs else False
     stepper = stepper(model, opt, crit, **kwargs)
     metrics = metrics or []
     callbacks = callbacks or []
@@ -103,6 +104,7 @@ def fit(model, data, epochs, opt, crit, metrics=None, callbacks=None, stepper=St
         num_batch = int(num_batch*epochs)
         epochs = 1
 
+    ep_vals = collections.OrderedDict()
     for epoch in tnrange(epochs, desc='Epoch'):
         if sampler: sampler.set_epoch(epoch)
         stepper.reset(True)
@@ -127,13 +129,20 @@ def fit(model, data, epochs, opt, crit, metrics=None, callbacks=None, stepper=St
             vals = validate(stepper, data.val_dl, metrics)
             if epoch == 0: print(layout.format(*names))
             print_stats(epoch, [debias_loss] + vals)
+            ep_vals = append_stats(ep_vals, epoch, [debias_loss] + vals)
             stop=False
             for cb in callbacks: stop = stop or cb.on_epoch_end(vals)
         if stop: break
 
     for cb in callbacks: cb.on_train_end()
-    return vals
+    if get_ep_vals:
+        return vals, ep_vals
+    else:
+        return vals
 
+def append_stats(ep_vals, epoch, values, decimals=6):
+    ep_vals[epoch]=list(np.round(values, decimals))
+    return ep_vals
 
 def print_stats(epoch, values, decimals=6):
     layout = "{!s:^10}" + " {!s:10}" * len(values)
@@ -169,15 +178,19 @@ def validate_next(stepper, metrics, val_iter):
 def validate(stepper, dl, metrics):
     batch_cnts,loss,res = [],[],[]
     stepper.reset(False)
-    for (*x,y) in iter(dl):
-        y = VV(y)
-        preds,l = stepper.evaluate(VV(x), y)
-        if isinstance(x,list): batch_cnts.append(len(x[0]))
-        else: batch_cnts.append(len(x))
-        loss.append(to_np(l))
-        res.append([f(preds.data,y.data) for f in metrics])
+    with no_grad_context():
+        for (*x,y) in iter(dl):
+            y = VV(y)
+            preds,l = stepper.evaluate(VV(x), y)
+            if isinstance(x,list): batch_cnts.append(len(x[0]))
+            else: batch_cnts.append(len(x))
+            loss.append(to_np(l))
+            res.append([f(preds.data,y.data) for f in metrics])
     return [np.average(loss, 0, weights=batch_cnts)] + list(np.average(np.stack(res), 0, weights=batch_cnts))
 
+def no_grad_context():
+    return torch.no_grad() if LooseVersion(torch.__version__) >= LooseVersion('0.4') else contextlib.suppress()
+    
 def get_prediction(x):
     if is_listy(x): x=x[0]
     return x.data
